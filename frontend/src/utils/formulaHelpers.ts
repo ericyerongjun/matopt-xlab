@@ -84,30 +84,42 @@ function _processNonCodeSegment(text: string): string {
     //      $$
     text = _normalizeSingleDollarDisplayBlocks(text);
 
-    // 4. Ensure $$ display blocks have blank lines before/after
-    //    so remark-math treats them as block-level math.
-    //    Only match actual $$ (two dollar signs), not single $.
-    text = text.replace(/([^\n$])\n?\$\$/g, "$1\n\n$$");
-    text = text.replace(/\$\$\n?([^\n$])/g, "$$\n\n$1");
-
     return text;
 }
 
 function _normalizeSingleDollarDisplayBlocks(text: string): string {
     const lines = text.split("\n");
     const out: string[] = [];
-    let inDisplayBlock = false;
+    let i = 0;
 
-    for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (line === "$") {
-            out.push("$$");
-            inDisplayBlock = !inDisplayBlock;
+    const isStandaloneDollar = (line: string): boolean => /^\s*\$\s*$/.test(line);
+
+    while (i < lines.length) {
+        if (!isStandaloneDollar(lines[i])) {
+            out.push(lines[i]);
+            i += 1;
             continue;
         }
-        out.push(rawLine);
+
+        let closing = -1;
+        for (let j = i + 1; j < lines.length; j += 1) {
+            if (isStandaloneDollar(lines[j])) {
+                closing = j;
+                break;
+            }
+        }
+
+        // Convert only paired `$ ... $` blocks. Leave unmatched `$` unchanged.
+        if (closing === -1) {
+            out.push(lines[i]);
+            i += 1;
+            continue;
+        }
+
+        const inner = lines.slice(i + 1, closing).join("\n").trim();
+        out.push(`$$${inner}$$`);
+        i = closing + 1;
     }
 
-    // If there was an unmatched opening "$", keep output as-is.
     return out.join("\n");
 }

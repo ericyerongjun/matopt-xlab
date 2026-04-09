@@ -93,9 +93,6 @@ export default function MessageList({ messages, loading }: Props) {
                                 ) : (
                                     <div className="thread__thinking-status" aria-label="Thinking status">
                                         <span className="thread__thinking-status-text">Thinking</span>
-                                        <span className="thread__thinking-status-chevron" aria-hidden="true">
-                                            ›
-                                        </span>
                                     </div>
                                 )}
                             </div>
