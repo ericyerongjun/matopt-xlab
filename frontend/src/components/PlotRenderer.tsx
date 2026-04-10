@@ -20,7 +20,7 @@ const DEFAULT_LAYOUT: Partial<Plotly.Layout> = {
     margin: { l: 50, r: 30, t: 40, b: 50 },
     font: { family: "inherit", size: 14 },
     paper_bgcolor: "transparent",
-    plot_bgcolor: "#fafafa",
+    plot_bgcolor: "transparent",
     xaxis: { gridcolor: "#e6e6f0", zeroline: false },
     yaxis: { gridcolor: "#e6e6f0", zeroline: false },
     legend: { orientation: "h", y: -0.15 },
@@ -29,7 +29,7 @@ const DEFAULT_LAYOUT: Partial<Plotly.Layout> = {
 
 const DEFAULT_CONFIG: Partial<Plotly.Config> = {
     responsive: true,
-    displayModeBar: true,
+    displayModeBar: false,
     modeBarButtonsToRemove: ["lasso2d", "select2d"],
     displaylogo: false,
 };
@@ -38,10 +38,21 @@ function PlotRenderer({ json }: Props) {
     const parsed = useMemo(() => {
         try {
             const obj = JSON.parse(json);
+            const mergedLayout = {
+                ...DEFAULT_LAYOUT,
+                ...obj.layout,
+                title: undefined,
+            };
+            const mergedConfig = {
+                ...DEFAULT_CONFIG,
+                ...obj.config,
+                displayModeBar: false,
+                displaylogo: false,
+            };
             return {
                 data: obj.data || [],
-                layout: { ...DEFAULT_LAYOUT, ...obj.layout },
-                config: { ...DEFAULT_CONFIG, ...obj.config },
+                layout: mergedLayout,
+                config: mergedConfig,
             };
         } catch {
             return null;

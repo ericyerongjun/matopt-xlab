@@ -5,17 +5,53 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { Message } from "../types/message";
 import MarkdownRenderer from "./MarkdownRenderer";
+import VisualArtifactCard from "./VisualArtifactCard";
 
 interface Props {
     messages: Message[];
     loading?: boolean;
+    onRegenerate?: (assistantId: string) => void;
 }
 
 interface MessageRowProps {
     msg: Message;
+    loading?: boolean;
+    onRegenerate?: (assistantId: string) => void;
+    showActions?: boolean;
 }
 
-function MessageRow({ msg }: MessageRowProps) {
+function looksLikeRawBackendMaterial(content: string): boolean {
+    const raw = content.trim();
+    if (!raw) return false;
+    const lower = raw.toLowerCase();
+    if (
+        raw.startsWith("{") &&
+        (raw.includes("\"assistant_markdown\"") || raw.includes("\"artifacts\"") || raw.includes("\"tool_calls\""))
+    ) {
+        return true;
+    }
+    return (
+        lower.includes("traceback (most recent call last):") ||
+        lower.includes("syntaxerror:") ||
+        lower.includes("import plotly.graph_objects") ||
+        lower.includes("fig.show()")
+    );
+}
+
+function MessageRow({ msg, loading, onRegenerate, showActions }: MessageRowProps) {
+    const hideRaw = msg.role === "assistant" && looksLikeRawBackendMaterial(msg.content);
+    const [copied, setCopied] = useState(false);
+
+    const copyOutput = async () => {
+        try {
+            await navigator.clipboard.writeText(msg.content || "");
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1200);
+        } catch {
+            setCopied(false);
+        }
+    };
+
     return (
         <div
             className={`thread__row ${msg.role === "user"
@@ -28,7 +64,36 @@ function MessageRow({ msg }: MessageRowProps) {
                     <div className="thread__body">
                         {msg.role === "assistant" ? (
                             <>
-                                <MarkdownRenderer content={msg.content} />
+                                {!hideRaw && <MarkdownRenderer content={msg.content} />}
+                                {msg.artifacts && msg.artifacts.length > 0 && (
+                                    <div className="thread__artifacts">
+                                        {msg.artifacts.map((artifact, idx) => (
+                                            <VisualArtifactCard
+                                                key={`${msg.id}-artifact-${idx}`}
+                                                artifact={artifact}
+                                            />
+                                        ))}
+                                    </div>
+                                )}
+                                {showActions && (
+                                    <div className="thread__message-actions">
+                                        <button
+                                            type="button"
+                                            className="thread__message-action"
+                                            onClick={copyOutput}
+                                        >
+                                            {copied ? "Copied" : "Copy"}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="thread__message-action"
+                                            onClick={() => onRegenerate?.(msg.id)}
+                                            disabled={Boolean(loading)}
+                                        >
+                                            Regenerate
+                                        </button>
+                                    </div>
+                                )}
                             </>
                         ) : (
                             <p>{msg.content}</p>
@@ -40,7 +105,7 @@ function MessageRow({ msg }: MessageRowProps) {
     );
 }
 
-export default function MessageList({ messages, loading }: Props) {
+export default function MessageList({ messages, loading, onRegenerate }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
     const [loadingElapsedMs, setLoadingElapsedMs] = useState(0);
     const latestAssistant = [...messages].reverse().find((m) => m.role === "assistant");
@@ -77,6 +142,13 @@ export default function MessageList({ messages, loading }: Props) {
                     <MessageRow
                         key={msg.id}
                         msg={msg}
+                        loading={loading}
+                        onRegenerate={onRegenerate}
+                        showActions={
+                            msg.role === "assistant"
+                            && !!msg.content.trim()
+                            && !(loading && msg.id === streamingId)
+                        }
                     />
                 );
             })}

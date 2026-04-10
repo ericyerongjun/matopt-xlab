@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import textwrap
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Literal, Optional
@@ -34,22 +35,37 @@ except Exception:  # pragma: no cover
 
 from PIL import Image, ImageDraw, ImageFont
 
+from agentic import run_agentic_chat
+from skill_router import resolve_skill_selection
+from skill_store import delete_skill, list_skills, read_skill, slugify, upsert_skill
+
 
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
 
 
+class VisualArtifact(BaseModel):
+    type: Literal["svg", "interactive_html", "plotly"]
+    title: str
+    description: str = ""
+    code: str
+
+
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     model: Optional[str] = None
     stream: Optional[bool] = False
+    agentic: Optional[bool] = True
+    skill_slugs: List[str] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
     id: str
     content: str
-    tool_calls: List[dict] = []
+    tool_calls: List[dict] = Field(default_factory=list)
+    artifacts: List[VisualArtifact] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     usage: Optional[dict] = None
 
 
@@ -58,6 +74,21 @@ class DocumentParseResponse(BaseModel):
     latex_blocks: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     preview_image_data_url: Optional[str] = None
+
+
+class SkillUpsertRequest(BaseModel):
+    slug: str
+    title: Optional[str] = None
+    content: str = ""
+
+
+class SkillResponse(BaseModel):
+    slug: str
+    title: str
+    content: str
+    path: str
+    updated_at: str
+    size_bytes: int
 
 
 app = FastAPI(title="MatOpt Chat Backend", version="0.1.0")
@@ -103,10 +134,15 @@ async def unhandled_exception_handler(_, exc: Exception):
     )
 
 
-def get_client() -> OpenAI:
+def _get_openai_api_key() -> str:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set")
+    return api_key
+
+
+def get_client() -> OpenAI:
+    api_key = _get_openai_api_key()
     return OpenAI(api_key=api_key)
 
 
@@ -379,12 +415,57 @@ def _run_chat(payload: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=400, detail="messages cannot be empty")
 
     model = payload.model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    api_key = _get_openai_api_key()
     client = get_client()
+    message_dicts = [m.model_dump() for m in payload.messages]
+    skill_selection = resolve_skill_selection(
+        messages=message_dicts,
+        openai_client=client,
+        model=model,
+        explicit_skill_slugs=payload.skill_slugs,
+    )
+    selected_skill_slugs = [
+        str(slug) for slug in skill_selection.get("selected_slugs", []) if str(slug).strip()
+    ]
+
+    if payload.agentic is not False:
+        try:
+            agentic_result = run_agentic_chat(
+                openai_client=client,
+                model=model,
+                api_key=api_key,
+                messages=message_dicts,
+                skill_slugs=selected_skill_slugs,
+            )
+            return ChatResponse(
+                id=f"chatcmpl-{int(time.time() * 1000)}",
+                content=str(agentic_result.get("assistant_markdown", "")),
+                artifacts=[
+                    VisualArtifact.model_validate(item)
+                    for item in agentic_result.get("artifacts", [])
+                    if isinstance(item, dict)
+                ],
+                tool_calls=[
+                    item
+                    for item in agentic_result.get("tool_calls", [])
+                    if isinstance(item, dict)
+                ],
+                metadata={
+                    "agentic": True,
+                    "agent_mode": agentic_result.get("agent_mode", "langgraph"),
+                    "selected_skills": selected_skill_slugs,
+                },
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Agentic pipeline failed: {exc}",
+            ) from exc
 
     try:
         completion = client.chat.completions.create(
             model=model,
-            messages=[m.model_dump() for m in payload.messages],
+            messages=message_dicts,
             temperature=0.7,
         )
     except APIStatusError as exc:
@@ -411,6 +492,10 @@ def _run_chat(payload: ChatRequest) -> ChatResponse:
     return ChatResponse(
         id=f"chatcmpl-{int(time.time() * 1000)}",
         content=content,
+        metadata={
+            "agentic": False,
+            "selected_skills": selected_skill_slugs,
+        },
         usage=usage,
     )
 
@@ -420,12 +505,74 @@ def _stream_chat_sse(payload: ChatRequest):
         raise HTTPException(status_code=400, detail="messages cannot be empty")
 
     model = payload.model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    api_key = _get_openai_api_key()
     client = get_client()
+    message_dicts = [m.model_dump() for m in payload.messages]
+    skill_selection = resolve_skill_selection(
+        messages=message_dicts,
+        openai_client=client,
+        model=model,
+        explicit_skill_slugs=payload.skill_slugs,
+    )
+    selected_skill_slugs = [
+        str(slug) for slug in skill_selection.get("selected_slugs", []) if str(slug).strip()
+    ]
+
+    if payload.agentic is not False:
+        try:
+            agentic = run_agentic_chat(
+                openai_client=client,
+                model=model,
+                api_key=api_key,
+                messages=message_dicts,
+                skill_slugs=selected_skill_slugs,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Agentic pipeline failed: {exc}") from exc
+
+        content = str(agentic.get("assistant_markdown", ""))
+        artifacts = [item for item in agentic.get("artifacts", []) if isinstance(item, dict)]
+        tool_calls = [item for item in agentic.get("tool_calls", []) if isinstance(item, dict)]
+
+        def agentic_event_gen():
+            response_id = f"chatcmpl-{int(time.time() * 1000)}"
+            try:
+                step = 1
+                for i in range(0, len(content), step):
+                    yield f"data: {json.dumps({'delta': content[i:i + step]})}\n\n"
+
+                done_payload = {
+                    "done": True,
+                    "id": response_id,
+                    "artifacts": artifacts,
+                    "tool_calls": tool_calls,
+                    "metadata": {
+                        "agentic": True,
+                        "agent_mode": agentic.get("agent_mode", "langgraph"),
+                        "selected_skills": selected_skill_slugs,
+                    },
+                }
+                yield f"data: {json.dumps(done_payload)}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as exc:
+                err = str(exc)
+                yield f"data: {json.dumps({'error': err})}\n\n"
+                yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            agentic_event_gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     try:
         stream = client.chat.completions.create(
             model=model,
-            messages=[m.model_dump() for m in payload.messages],
+            messages=message_dicts,
             temperature=0.7,
             stream=True,
         )
@@ -456,7 +603,7 @@ def _stream_chat_sse(payload: ChatRequest):
                 if delta:
                     yield f"data: {json.dumps({'delta': delta})}\n\n"
 
-            yield f"data: {json.dumps({'done': True, 'id': response_id})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'id': response_id, 'metadata': {'agentic': False, 'selected_skills': selected_skill_slugs}})}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as exc:
             err = str(exc)
@@ -502,6 +649,69 @@ def chat_stream(payload: ChatRequest):
 @app.post("/api/chat/stream")
 def chat_stream_api(payload: ChatRequest):
     return _stream_chat_sse(payload)
+
+
+def _skill_response(data: Dict[str, Any]) -> SkillResponse:
+    return SkillResponse(
+        slug=str(data["slug"]),
+        title=str(data["title"]),
+        content=str(data["content"]),
+        path=str(data["path"]),
+        updated_at=str(data["updated_at"]),
+        size_bytes=int(data["size_bytes"]),
+    )
+
+
+@app.get("/skills")
+def skills_list() -> Dict[str, Any]:
+    items = list_skills()
+    return {"skills": items, "count": len(items), "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/skills")
+def skills_list_api() -> Dict[str, Any]:
+    return skills_list()
+
+
+@app.get("/skills/{slug}", response_model=SkillResponse)
+def skills_get(slug: str) -> SkillResponse:
+    try:
+        return _skill_response(read_skill(slugify(slug)))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/skills/{slug}", response_model=SkillResponse)
+def skills_get_api(slug: str) -> SkillResponse:
+    return skills_get(slug)
+
+
+@app.post("/skills", response_model=SkillResponse)
+def skills_upsert(payload: SkillUpsertRequest) -> SkillResponse:
+    data = upsert_skill(
+        slug=payload.slug,
+        content=payload.content,
+        title=payload.title,
+    )
+    return _skill_response(data)
+
+
+@app.post("/api/skills", response_model=SkillResponse)
+def skills_upsert_api(payload: SkillUpsertRequest) -> SkillResponse:
+    return skills_upsert(payload)
+
+
+@app.delete("/skills/{slug}")
+def skills_delete(slug: str) -> Dict[str, Any]:
+    deleted = delete_skill(slugify(slug))
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Skill '{slug}' does not exist")
+    return {"deleted": True, "slug": slugify(slug)}
+
+
+@app.delete("/api/skills/{slug}")
+def skills_delete_api(slug: str) -> Dict[str, Any]:
+    return skills_delete(slug)
 
 
 def _parse_document_impl(filename: str, data: bytes) -> DocumentParseResponse:

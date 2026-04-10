@@ -6,16 +6,21 @@ A full-stack AI chat application with multi-provider model support and rich docu
 
 - **Multi-provider chat** — Switch between ChatGPT, DeepSeek, Qwen, Kimi, Llama, Gemini, and Tencent Hunyuan from the UI
 - **Streaming responses** — Real-time token streaming via Server-Sent Events
+- **Agentic graph generation** — LangChain + LangGraph backend flow that can produce structured visual artifacts
+- **Visual artifacts** — First-class SVG and interactive HTML outputs rendered directly in chat
+- **MCP-ready tools** — Local MCP server (`backend/mcp_server.py`) for graph scaffolding and skill management tools
 - **Document parsing** — Upload and chat with PDF, DOCX, PPTX, PPT, DOC, Jupyter notebooks, images (PNG/JPG/JPEG/HEIC), and source code files (R, Rmd, Python, C, C++, Java)
 - **Math rendering** — LaTeX expressions rendered inline via KaTeX
 - **Rich output** — Syntax-highlighted code, Mermaid diagrams, and interactive charts (Chart.js, Plotly)
 - **Conversation history** — Sidebar with session management and new-chat support
+- **SKILL.md management** — Built-in CRUD APIs for agent skill documents under `backend/skills/`
+- **Automatic skill routing** — Backend auto-detects relevant skills from user intent and injects them into agentic runs (no manual UI selection required)
 
 ## Tech Stack
 
 | Layer | Stack |
 | --- | --- |
-| Backend | Python 3.11, FastAPI, Uvicorn, OpenAI SDK |
+| Backend | Python 3.11, FastAPI, Uvicorn, OpenAI SDK, LangChain, LangGraph, MCP |
 | Frontend | React 19, TypeScript, Vite, react-markdown, KaTeX, Plotly |
 | Document parsing | PyMuPDF, python-docx, python-pptx, Pillow, LibreOffice (optional) |
 
@@ -48,6 +53,7 @@ Create `backend/.env`:
 ```env
 OPENAI_API_KEY=sk-...          # Required
 OPENAI_MODEL=gpt-4o-mini       # Optional, default: gpt-4o-mini
+# OPENAI_API_KEY is reused by the agentic graph pipeline.
 ```
 
 ## Process Manager (`run.sh`)
@@ -105,4 +111,8 @@ VITE_BACKEND_URL=http://localhost:8000 npm run dev
 | `GET` | `/health` | Health check |
 | `POST` | `/api/chat` | Non-streaming chat completion |
 | `POST` | `/api/chat/stream` | Streaming chat via SSE |
+| `GET` | `/api/skills` | List SKILL.md docs |
+| `GET` | `/api/skills/{slug}` | Read one SKILL.md doc |
+| `POST` | `/api/skills` | Create/update a SKILL.md doc |
+| `DELETE` | `/api/skills/{slug}` | Delete a SKILL.md doc |
 | `POST` | `/api/documents/parse` | Parse and extract text from an uploaded file |

@@ -17,6 +17,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import mermaid from "mermaid";
 import PlotRenderer from "./PlotRenderer";
 import ChartRenderer from "./ChartRenderer";
+import VisualArtifactCard from "./VisualArtifactCard";
 import { preprocessLaTeX } from "../utils/formulaHelpers";
 
 // Initialise Mermaid once
@@ -68,6 +69,30 @@ function MarkdownRenderer({ content }: Props) {
                         // Chart.js charts
                         if (lang === "chartjs" || lang === "chart") {
                             return <ChartRenderer json={codeString} />;
+                        }
+
+                        // Native visual artifacts from assistant code blocks
+                        if (lang === "svg") {
+                            return (
+                                <VisualArtifactCard
+                                    artifact={{
+                                        type: "svg",
+                                        title: "SVG Visual",
+                                        code: codeString,
+                                    }}
+                                />
+                            );
+                        }
+                        if (lang === "html") {
+                            return (
+                                <VisualArtifactCard
+                                    artifact={{
+                                        type: "interactive_html",
+                                        title: "Interactive HTML Visual",
+                                        code: codeString,
+                                    }}
+                                />
+                            );
                         }
 
                         // Syntax-highlighted code blocks

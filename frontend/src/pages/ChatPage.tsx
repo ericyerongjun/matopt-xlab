@@ -118,6 +118,7 @@ export default function ChatPage() {
         loading,
         error,
         sendMessage,
+        regenerateAssistant,
     } = useChat();
 
     const {
@@ -145,6 +146,13 @@ export default function ChatPage() {
             sendMessage(text, toApiModelName(selectedModel));
         },
         [sendMessage, selectedModel]
+    );
+
+    const handleRegenerate = useCallback(
+        (assistantId: string) => {
+            regenerateAssistant(assistantId, toApiModelName(selectedModel));
+        },
+        [regenerateAssistant, selectedModel]
     );
 
     useEffect(() => {
@@ -345,7 +353,11 @@ export default function ChatPage() {
                     {isEmpty ? (
                         <WelcomeScreen />
                     ) : (
-                        <MessageList messages={messages} loading={loading} />
+                        <MessageList
+                            messages={messages}
+                            loading={loading}
+                            onRegenerate={handleRegenerate}
+                        />
                     )}
                 </div>
 

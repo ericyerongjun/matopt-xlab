@@ -3,6 +3,7 @@ export { default as InlineMathText } from "./InlineMathText";
 export { default as PlotRenderer } from "./PlotRenderer";
 export { default as ChartRenderer } from "./ChartRenderer";
 export { default as MessageList } from "./MessageList";
+export { default as VisualArtifactCard } from "./VisualArtifactCard";
 export { default as MathInput } from "./MathInput";
 export { default as FileUploader } from "./FileUploader";
 export { default as ExportButton } from "./ExportButton";

@@ -4,14 +4,34 @@ export interface ChatRequestBody {
     messages: { role: string; content: string }[];
     model?: string;
     stream?: boolean;
+    agentic?: boolean;
+    skill_slugs?: string[];
     use_sympy?: boolean;
     use_wolfram?: boolean;
+}
+
+export interface VisualArtifact {
+    type: "svg" | "interactive_html" | "plotly";
+    title: string;
+    description?: string;
+    code: string;
 }
 
 export interface ChatResponseBody {
     id: string;
     content: string;
     tool_calls?: { name: string; arguments: Record<string, unknown>; result?: string }[];
+    artifacts?: VisualArtifact[];
+    metadata?: Record<string, unknown>;
+    usage?: Record<string, number>;
+}
+
+export interface StreamDonePayload {
+    done: boolean;
+    id: string;
+    artifacts?: VisualArtifact[];
+    tool_calls?: { name: string; arguments: Record<string, unknown>; result?: string }[];
+    metadata?: Record<string, unknown>;
     usage?: Record<string, number>;
 }
 

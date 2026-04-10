@@ -84,6 +84,10 @@ function _processNonCodeSegment(text: string): string {
     //      $$
     text = _normalizeSingleDollarDisplayBlocks(text);
 
+    // 4. Normalize inline dollar math by trimming stray spaces:
+    //    "$ f(x,y) = x^2 + y^2 $" -> "$f(x,y) = x^2 + y^2$"
+    text = _normalizeInlineDollarMath(text);
+
     return text;
 }
 
@@ -122,4 +126,14 @@ function _normalizeSingleDollarDisplayBlocks(text: string): string {
     }
 
     return out.join("\n");
+}
+
+function _normalizeInlineDollarMath(text: string): string {
+    // Keep this lightweight and conservative:
+    // normalize only tokens that already look like inline-math delimiters.
+    return text.replace(/\$([^$\n]+)\$/g, (_match, inner: string) => {
+        const trimmed = inner.trim();
+        if (!trimmed) return _match;
+        return `$${trimmed}$`;
+    });
 }

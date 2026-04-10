@@ -3,7 +3,7 @@
  */
 
 import apiClient from "./api";
-import type { ChatRequestBody, ChatResponseBody } from "./types";
+import type { ChatRequestBody, ChatResponseBody, StreamDonePayload } from "./types";
 
 export async function sendChatMessage(
     body: ChatRequestBody
@@ -20,7 +20,8 @@ export async function sendChatMessage(
  */
 export async function streamChatMessage(
     body: ChatRequestBody,
-    onChunk: (text: string) => void
+    onChunk: (text: string) => void,
+    onDone?: (payload: StreamDonePayload) => void
 ): Promise<void> {
     const resp = await fetch("/api/chat/stream", {
         method: "POST",
@@ -57,7 +58,16 @@ export async function streamChatMessage(
             const payload = dataLine.slice(6).trim();
             if (!payload || payload === "[DONE]") continue;
 
-            let parsed: { delta?: string; error?: string } = {};
+            let parsed: {
+                delta?: string;
+                error?: string;
+                done?: boolean;
+                id?: string;
+                artifacts?: StreamDonePayload["artifacts"];
+                tool_calls?: StreamDonePayload["tool_calls"];
+                metadata?: StreamDonePayload["metadata"];
+                usage?: StreamDonePayload["usage"];
+            } = {};
             try {
                 parsed = JSON.parse(payload);
             } catch {
@@ -69,6 +79,16 @@ export async function streamChatMessage(
             }
             if (parsed.delta) {
                 onChunk(parsed.delta);
+            }
+            if (parsed.done && parsed.id && onDone) {
+                onDone({
+                    done: true,
+                    id: parsed.id,
+                    artifacts: parsed.artifacts,
+                    tool_calls: parsed.tool_calls,
+                    metadata: parsed.metadata,
+                    usage: parsed.usage,
+                });
             }
         }
     }
