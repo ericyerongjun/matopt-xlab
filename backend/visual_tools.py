@@ -281,6 +281,260 @@ def create_paraboloid_interactive_html(title: str = "Interactive f(x, y) = x^2 +
 </html>"""
 
 
+def create_hyperbolic_paraboloid_ab_slider_html(
+    title: str = "Interactive f(x, y) = a*x^2 - b*y^2",
+    *,
+    a_min: float = -3.0,
+    a_max: float = 3.0,
+    a_step: float = 0.1,
+    a_default: float = 1.0,
+    b_min: float = -3.0,
+    b_max: float = 3.0,
+    b_step: float = 0.1,
+    b_default: float = 1.0,
+    scale_min: float = 8.0,
+    scale_max: float = 28.0,
+    scale_step: float = 1.0,
+    scale_default: float = 16.0,
+) -> str:
+    safe_title = escape(title)
+    a_min_s = f"{a_min:g}"
+    a_max_s = f"{a_max:g}"
+    a_step_s = f"{a_step:g}"
+    a_default_s = f"{a_default:g}"
+    b_min_s = f"{b_min:g}"
+    b_max_s = f"{b_max:g}"
+    b_step_s = f"{b_step:g}"
+    b_default_s = f"{b_default:g}"
+    scale_min_s = f"{scale_min:g}"
+    scale_max_s = f"{scale_max:g}"
+    scale_step_s = f"{scale_step:g}"
+    scale_default_s = f"{scale_default:g}"
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{safe_title}</title>
+    <style>
+      body {{
+        margin: 0;
+        font-family: "IBM Plex Sans", system-ui, sans-serif;
+        background: #0b1220;
+        color: #e2e8f0;
+      }}
+      .wrap {{
+        padding: 14px;
+      }}
+      .panel {{
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 12px;
+      }}
+      .controls {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px 14px;
+        align-items: center;
+        margin-bottom: 10px;
+      }}
+      .formula {{
+        font-size: 12px;
+        color: #cbd5e1;
+      }}
+      label {{
+        font-size: 13px;
+        color: #94a3b8;
+      }}
+      input[type="range"] {{
+        width: 100%;
+      }}
+      canvas {{
+        width: 100%;
+        height: 390px;
+        background: radial-gradient(circle at 50% 35%, #1f2937 0%, #0b1220 70%);
+        border-radius: 10px;
+        border: 1px solid #243244;
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="panel">
+        <div class="controls">
+          <strong>{safe_title}</strong>
+          <label>
+            a: <span id="aVal">{a_default_s}</span>
+            <input id="a" type="range" min="{a_min_s}" max="{a_max_s}" step="{a_step_s}" value="{a_default_s}" />
+          </label>
+          <label>
+            b: <span id="bVal">{b_default_s}</span>
+            <input id="b" type="range" min="{b_min_s}" max="{b_max_s}" step="{b_step_s}" value="{b_default_s}" />
+          </label>
+          <label>
+            Scale: <span id="scaleVal">{scale_default_s}</span>
+            <input id="scale" type="range" min="{scale_min_s}" max="{scale_max_s}" step="{scale_step_s}" value="{scale_default_s}" />
+          </label>
+        </div>
+        <div class="formula" id="formula">f(x, y) = {a_default_s}*x^2 - {b_default_s}*y^2</div>
+        <canvas id="cv" width="980" height="500" aria-label="{safe_title}"></canvas>
+      </div>
+    </div>
+    <script>
+      const cv = document.getElementById("cv");
+      const ctx = cv.getContext("2d");
+      const aEl = document.getElementById("a");
+      const bEl = document.getElementById("b");
+      const scaleEl = document.getElementById("scale");
+      const aVal = document.getElementById("aVal");
+      const bVal = document.getElementById("bVal");
+      const scaleVal = document.getElementById("scaleVal");
+      const formulaEl = document.getElementById("formula");
+
+      function rot(x, y, z, pitch, yaw) {{
+        const cy = Math.cos(yaw), sy = Math.sin(yaw);
+        const cp = Math.cos(pitch), sp = Math.sin(pitch);
+        const x1 = x * cy + z * sy;
+        const z1 = -x * sy + z * cy;
+        const y2 = y * cp - z1 * sp;
+        const z2 = y * sp + z1 * cp;
+        return [x1, y2, z2];
+      }}
+
+      function draw() {{
+        const w = cv.width;
+        const h = cv.height;
+        ctx.clearRect(0, 0, w, h);
+
+        const a = Number(aEl.value);
+        const b = Number(bEl.value);
+        const scale = Number(scaleEl.value);
+        aVal.textContent = a.toFixed(2);
+        bVal.textContent = b.toFixed(2);
+        scaleVal.textContent = String(scale);
+        formulaEl.textContent = `f(x, y) = ${{a.toFixed(2)}}*x^2 - ${{b.toFixed(2)}}*y^2`;
+
+        const pitch = 54 * Math.PI / 180;
+        const yaw = -38 * Math.PI / 180;
+        const xMin = -3, xMax = 3, yMin = -3, yMax = 3, step = 0.2;
+
+        const rows = [];
+        for (let yy = yMin; yy <= yMax + 1e-9; yy += step) {{
+          const row = [];
+          for (let xx = xMin; xx <= xMax + 1e-9; xx += step) {{
+            const zz = a * xx * xx - b * yy * yy;
+            row.push([xx, yy, zz]);
+          }}
+          rows.push(row);
+        }}
+
+        const projected = [];
+        for (const row of rows) {{
+          const pRow = [];
+          for (const [x, y, z] of row) {{
+            const [rx, ry, rz] = rot(x, y, z, pitch, yaw);
+            const perspective = 1 / (1 + rz * 0.05);
+            const sx = w * 0.5 + rx * scale * 18 * perspective;
+            const sy = h * 0.76 - ry * scale * 9 * perspective - z * scale * 0.8;
+            pRow.push([sx, sy, z]);
+          }}
+          projected.push(pRow);
+        }}
+
+        for (let i = 0; i < projected.length - 1; i++) {{
+          for (let j = 0; j < projected[i].length - 1; j++) {{
+            const p1 = projected[i][j], p2 = projected[i][j + 1];
+            const p3 = projected[i + 1][j + 1], p4 = projected[i + 1][j];
+            const zAvg = (p1[2] + p2[2] + p3[2] + p4[2]) * 0.25;
+            const t = Math.max(0, Math.min(1, (zAvg + 12) / 24));
+            const r = Math.round(80 + t * 90);
+            const g = Math.round(120 + t * 85);
+            const bl = Math.round(220 - t * 140);
+            ctx.fillStyle = `rgba(${{r}}, ${{g}}, ${{bl}}, 0.66)`;
+            ctx.beginPath();
+            ctx.moveTo(p1[0], p1[1]);
+            ctx.lineTo(p2[0], p2[1]);
+            ctx.lineTo(p3[0], p3[1]);
+            ctx.lineTo(p4[0], p4[1]);
+            ctx.closePath();
+            ctx.fill();
+          }}
+        }}
+
+        ctx.strokeStyle = "#94a3b8";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(w * 0.1, h * 0.76);
+        ctx.lineTo(w * 0.9, h * 0.76);
+        ctx.moveTo(w * 0.5, h * 0.9);
+        ctx.lineTo(w * 0.5, h * 0.18);
+        ctx.stroke();
+      }}
+
+      [aEl, bEl, scaleEl].forEach((el) => el.addEventListener("input", draw));
+      draw();
+    </script>
+  </body>
+</html>"""
+
+
+def create_ab_tunable_surface_plotly_json(
+    *,
+    operator: str = "minus",
+    a_min: float = -2.5,
+    a_max: float = 2.5,
+    a_step: float = 0.1,
+    a_default: float = 1.0,
+    b_min: float = -2.5,
+    b_max: float = 2.5,
+    b_step: float = 0.1,
+    b_default: float = 1.0,
+) -> str:
+    xs = [round(-3 + i * 0.2, 3) for i in range(31)]
+    ys = [round(-3 + i * 0.2, 3) for i in range(31)]
+    op_sign = 1.0 if operator == "plus" else -1.0
+    z = [
+        [round(a_default * x * x + op_sign * b_default * y * y, 6) for x in xs]
+        for y in ys
+    ]
+    payload = {
+        "data": [
+            {
+                "type": "surface",
+                "x": xs,
+                "y": ys,
+                "z": z,
+                "colorscale": "Viridis",
+                "showscale": True,
+                "contours": {"z": {"show": True, "usecolormap": True, "highlightwidth": 1}},
+                "hovertemplate": "x=%{x}<br>y=%{y}<br>f=%{z}<extra></extra>",
+            }
+        ],
+        "layout": {
+            "scene": {
+                "xaxis": {"title": "x"},
+                "yaxis": {"title": "y"},
+                "zaxis": {"title": "f(x,y)"},
+                "camera": {"eye": {"x": 1.5, "y": 1.3, "z": 0.9}},
+            },
+            "margin": {"l": 0, "r": 0, "t": 12, "b": 0},
+            "paper_bgcolor": "rgba(0,0,0,0)",
+            "plot_bgcolor": "rgba(0,0,0,0)",
+        },
+        "config": {"responsive": True, "displaylogo": False},
+        "meta": {
+            "interactiveSurface": {
+                "kind": "ab_quadratic_surface",
+                "operator": operator,
+                "a": {"min": a_min, "max": a_max, "step": a_step, "default": a_default},
+                "b": {"min": b_min, "max": b_max, "step": b_step, "default": b_default},
+            }
+        },
+    }
+    return json.dumps(payload)
+
+
 def create_paraboloid_plotly_json(title: str = "Interactive f(x, y) = x^2 + y^2") -> str:
     xs = [round(-3 + i * 0.3, 3) for i in range(21)]
     ys = [round(-3 + i * 0.3, 3) for i in range(21)]

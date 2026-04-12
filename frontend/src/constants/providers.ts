@@ -1,3 +1,9 @@
+import openaiLogo from "@lobehub/icons-static-png/dark/openai.png";
+import deepseekLogo from "@lobehub/icons-static-png/dark/deepseek-color.png";
+import qwenLogo from "@lobehub/icons-static-png/dark/qwen-color.png";
+import kimiLogo from "@lobehub/icons-static-png/dark/kimi-color.png";
+import geminiLogo from "@lobehub/icons-static-png/dark/gemini-color.png";
+
 export const PROVIDER_MODELS: Record<string, string[]> = {
     ChatGPT: ["GPT-4o", "GPT-5.4"],
     DeepSeek: ["DeepSeek-V3", "DeepSeek-R1"],
@@ -5,27 +11,15 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
     Kimi: ["Kimi K2", "Kimi 1.5"],
     Llama: ["Llama 3.1 70B", "Llama 4 Maverick"],
     Gemini: ["Gemini 2.5 Pro", "Gemini 2.5 Flash"],
-    "Tencent Hunyuan": ["Hunyuan Turbo", "Hunyuan T1"],
 };
 
-// Simple Icons CDN SVG endpoints (brand marks).
-// We use monochrome white logos for dark UI.
 export const PROVIDER_LOGOS: Record<string, string> = {
-    ChatGPT: "https://cdn.simpleicons.org/openai/FFFFFF",
-    DeepSeek: "https://cdn.simpleicons.org/deepseek/FFFFFF",
-    Qwen: "https://cdn.simpleicons.org/qwen/FFFFFF",
-    Kimi: "https://cdn.simpleicons.org/moonshot/FFFFFF",
+    ChatGPT: openaiLogo,
+    DeepSeek: deepseekLogo,
+    Qwen: qwenLogo,
+    Kimi: kimiLogo,
     Llama: "https://cdn.simpleicons.org/meta/FFFFFF",
-    Gemini: "https://cdn.simpleicons.org/googlegemini/FFFFFF",
-    "Tencent Hunyuan": "https://cdn.simpleicons.org/tencent/FFFFFF",
+    Gemini: geminiLogo,
 };
 
-export const PROVIDER_INITIALS: Record<string, string> = {
-    ChatGPT: "AI",
-    DeepSeek: "DS",
-    Qwen: "QW",
-    Kimi: "KM",
-    Llama: "LL",
-    Gemini: "GM",
-    "Tencent Hunyuan": "TH",
-};
+export const DEFAULT_PROVIDER_LOGO = openaiLogo;

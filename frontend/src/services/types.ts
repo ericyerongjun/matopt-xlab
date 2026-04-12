@@ -69,3 +69,17 @@ export interface FollowUpRequestBody {
 export interface FollowUpResponseBody {
     followups: string[];
 }
+
+export interface WorkflowDownload {
+    url: string;
+    filename: string;
+    size_bytes: number;
+}
+
+export interface PdfWorkflowResponseBody {
+    assistant_markdown: string;
+    analysis: string;
+    selected_skills: string[];
+    download: WorkflowDownload;
+    metadata?: Record<string, unknown>;
+}

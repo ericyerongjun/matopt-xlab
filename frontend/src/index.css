@@ -12,7 +12,7 @@
 /* ── CSS Variables ──────────────────────────────────────────────────── */
 :root {
     /* Sidebar */
-    --sidebar-bg: #171717;
+    --sidebar-bg: #000000;
     --sidebar-hover: #1f1f1f;
     --sidebar-active: #2a2a2a;
     --sidebar-text: #e7e7e9;
@@ -132,35 +132,32 @@ button:disabled {
 }
 
 .sidebar__model-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 10px;
+    width: 186px;
+    height: 56px;
+    border-radius: 8px;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     color: #f0f0f0;
     background: transparent;
-    border: 1px solid transparent;
+    border: none;
+    overflow: hidden;
 }
 
 .sidebar__model-logo {
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     object-fit: contain;
     display: block;
 }
 
-.sidebar__model-logo-fallback {
-    display: none;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border-radius: 999px;
-    background: #2a2a2a;
-    color: #e8e8e8;
-    font-size: 0.62rem;
-    font-weight: 700;
+.sidebar__model-logo--brand {
+    width: auto;
+    height: 52px;
+    max-width: 184px;
+    object-fit: contain;
+    object-position: left center;
+    image-rendering: -webkit-optimize-contrast;
 }
 
 .sidebar__quick {
@@ -632,6 +629,12 @@ button:disabled {
     cursor: pointer;
 }
 
+.main__model-provider {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .main__model-selected {
     font-size: 0.78rem;
     color: var(--text-muted);
@@ -682,8 +685,8 @@ button:disabled {
 }
 
 .main__provider-logo-wrap {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -691,23 +694,10 @@ button:disabled {
 }
 
 .main__provider-logo {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     object-fit: contain;
     display: block;
-}
-
-.main__provider-logo-fallback {
-    display: none;
-    width: 16px;
-    height: 16px;
-    border-radius: 999px;
-    align-items: center;
-    justify-content: center;
-    background: #2a2a2a;
-    color: #e8e8e8;
-    font-size: 0.5rem;
-    font-weight: 700;
 }
 
 .main__model-suboptions {
@@ -1038,6 +1028,33 @@ button:disabled {
     margin-top: 10px;
     display: flex;
     gap: 8px;
+}
+
+.thread__downloads {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.thread__download-link {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(147, 197, 253, 0.45);
+    background: rgba(59, 130, 246, 0.14);
+    color: #bfdbfe;
+    font-size: 0.78rem;
+    line-height: 1;
+    padding: 7px 11px;
+    border-radius: 999px;
+    text-decoration: none;
+    transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.thread__download-link:hover {
+    background: rgba(59, 130, 246, 0.24);
+    border-color: rgba(147, 197, 253, 0.7);
+    color: #e0f2fe;
 }
 
 .thread__message-action {
@@ -1375,21 +1392,31 @@ button:disabled {
     border: none;
     background: transparent;
     resize: none;
-    font-size: 0.82rem;
+    font-size: 0.92rem;
     line-height: 1.4;
     color: var(--text-primary);
     padding: 4px 8px;
     max-height: 200px;
-    overflow-y: hidden;
+    overflow: hidden;
+    overflow-x: hidden;
     font-family: inherit;
+    scrollbar-width: none;
+    text-align: left;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .chat-input__textarea:focus {
     outline: none;
 }
 
+.chat-input__textarea::-webkit-scrollbar {
+    display: none;
+}
+
 .chat-input__textarea::placeholder {
     color: var(--text-muted);
+    font-size: 0.95rem;
 }
 
 .chat-input__send {

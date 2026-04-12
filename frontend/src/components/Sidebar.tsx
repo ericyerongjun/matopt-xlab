@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import type { Conversation } from "../types/conversation";
 import type { ExportFormat } from "../types/export";
-import { PROVIDER_LOGOS, PROVIDER_INITIALS } from "../constants/providers";
 
 interface Props {
     conversations: Conversation[];
@@ -43,23 +42,7 @@ export default function Sidebar({
     collapsed,
     onToggleCollapse,
 }: Props) {
-    const handleLogoLoad = (
-        e: React.SyntheticEvent<HTMLImageElement, Event>
-    ) => {
-        e.currentTarget.style.display = "block";
-        const fallback = e.currentTarget
-            .nextElementSibling as HTMLElement | null;
-        if (fallback) fallback.style.display = "none";
-    };
-
-    const handleLogoError = (
-        e: React.SyntheticEvent<HTMLImageElement, Event>
-    ) => {
-        e.currentTarget.style.display = "none";
-        const fallback = e.currentTarget
-            .nextElementSibling as HTMLElement | null;
-        if (fallback) fallback.style.display = "inline-flex";
-    };
+    const projectLogoUrl = "/assets/xlab.PNG";
 
     const featureButtons = [
         { label: "Generate Exercises", icon: NotebookPen },
@@ -129,15 +112,10 @@ export default function Sidebar({
                             title={`${selectedProvider} selected`}
                         >
                             <img
-                                className="sidebar__model-logo"
-                                src={PROVIDER_LOGOS[selectedProvider]}
-                                alt={`${selectedProvider} logo`}
-                                onLoad={handleLogoLoad}
-                                onError={handleLogoError}
+                                className="sidebar__model-logo sidebar__model-logo--brand"
+                                src={projectLogoUrl}
+                                alt="Polyu X AI Lab logo"
                             />
-                            <span className="sidebar__model-logo-fallback">
-                                {PROVIDER_INITIALS[selectedProvider] ?? selectedProvider.slice(0, 2).toUpperCase()}
-                            </span>
                         </div>
                         <button
                             className="sidebar__toggle"

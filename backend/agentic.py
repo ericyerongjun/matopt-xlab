@@ -12,7 +12,8 @@ from openai import OpenAI
 
 from skill_store import read_skill
 from visual_tools import (
-    sanitize_interactive_html,
+    create_ab_tunable_surface_plotly_json,
+    create_plotly_line_fallback_json,
 )
 
 try:  # Optional at runtime, required for full agentic mode.
@@ -46,7 +47,7 @@ Return strict JSON only (no markdown fences) with this schema:
   "assistant_markdown": "string",
   "artifacts": [
     {
-      "type": "interactive_html | plotly",
+      "type": "plotly",
       "title": "string",
       "description": "string",
       "code": "string"
@@ -61,8 +62,8 @@ Return strict JSON only (no markdown fences) with this schema:
 }
 
 When the user asks for graphs/visuals, always include at least one artifact.
-Never return SVG artifacts.
-Prefer Plotly artifacts unless the user explicitly asks for an interactive HTML chart.
+Only return Plotly artifacts.
+Never return SVG or interactive_html artifacts.
 For graph artifacts, keep title as an empty string and put short explanatory text in description.
 """
 
@@ -205,9 +206,8 @@ def _generate_visual_with_python_sandbox(
         "- You may use common scientific libraries if available (numpy, scipy, sympy, pandas, plotly).\n"
         "- If a library is unavailable, gracefully fall back to pure-python numeric approximation.\n"
         "- Print exactly one JSON object to stdout with schema:\n"
-        '  {"assistant_markdown":"","artifacts":[{"type":"plotly|interactive_html","title":"","description":"string","code":"string"}],"tool_calls":[]}\n'
+        '  {"assistant_markdown":"","artifacts":[{"type":"plotly","title":"","description":"string","code":"string"}],"tool_calls":[]}\n'
         "- For plotly artifacts, code must be a JSON string containing Plotly {data, layout, config}.\n"
-        "- For interactive_html artifacts, include working JS and use Plotly.js or Chart.js only.\n"
         "- Ensure artifacts are non-empty and directly match the user's expression/problem.\n"
         "- Do not output placeholder/fallback content.\n"
     )
@@ -287,18 +287,6 @@ def _recover_corrupted_payload(raw: str) -> Dict[str, Any]:
             }
         )
 
-    html_match = re.search(r"(<!doctype html[\s\S]*?</html>)", text, flags=re.IGNORECASE)
-    if html_match:
-        code = html_match.group(1).replace('\\"', '"').replace("\\n", "\n")
-        artifacts.append(
-            {
-                "type": "interactive_html",
-                "title": "Recovered Interactive Graph",
-                "description": "Recovered from malformed model JSON output.",
-                "code": code,
-            }
-        )
-
     tool_calls: List[Dict[str, Any]] = []
     return {"assistant_markdown": markdown, "artifacts": artifacts, "tool_calls": tool_calls}
 
@@ -328,11 +316,10 @@ def _unwrap_nested_payload(parsed: Dict[str, Any]) -> Dict[str, Any]:
 
 def _extract_visuals_from_markdown(markdown: str) -> List[Dict[str, str]]:
     artifacts: List[Dict[str, str]] = []
-    for lang, code in re.findall(r"```(svg|html)\n(.*?)```", markdown, flags=re.DOTALL):
-        art_type = "svg" if lang == "svg" else "interactive_html"
+    for lang, code in re.findall(r"```(plotly)\n(.*?)```", markdown, flags=re.DOTALL | re.IGNORECASE):
         artifacts.append(
             {
-                "type": art_type,
+                "type": "plotly",
                 "title": "Generated Visual",
                 "description": "",
                 "code": code.strip(),
@@ -349,30 +336,6 @@ def _repair_code_string(code: str) -> str:
         fixed = fixed[1:-1]
     fixed = fixed.replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t")
     return fixed.strip()
-
-
-def _looks_like_interactive_html(code: str) -> bool:
-    lower = code.lower()
-    has_markup = "<html" in lower or "<!doctype" in lower or "<body" in lower
-    has_surface = "<canvas" in lower or "<svg" in lower
-    has_logic = "<script" in lower
-    return has_markup and has_surface and has_logic
-
-
-def _uses_supported_interactive_lib(code: str) -> bool:
-    lower = code.lower()
-    chart_js_hints = (
-        "new chart(" in lower
-        or "chart.umd.js" in lower
-        or "chart.js" in lower
-    )
-    plotly_hints = "plotly.newplot" in lower or "plotly" in lower
-    return chart_js_hints or plotly_hints
-
-
-def _contains_slider_control(code: str) -> bool:
-    lower = code.lower()
-    return 'type="range"' in lower or "type='range'" in lower
 
 
 def _latest_user_content(messages: List[Dict[str, str]]) -> str:
@@ -479,8 +442,26 @@ def _wants_critical_point_highlight(content: str) -> bool:
 
 def _prefers_interactive_slider(content: str) -> bool:
     lower = content.lower()
-    has_interactive = any(token in lower for token in ("interactive", "slider", "adjust", "parameter", "parameters"))
-    return has_interactive and any(token in lower for token in ("function", "graph", "plot", "chart", "f("))
+    slider_intent = any(
+        token in lower
+        for token in (
+            "interactive",
+            "slider",
+            "adjust",
+            "change",
+            "modify",
+            "tune",
+            "vary",
+            "parameter",
+            "parameters",
+        )
+    )
+    function_intent = (
+        any(token in lower for token in ("function", "graph", "plot", "chart", "f("))
+        or _is_xy_surface_request(content)
+        or any(token in lower for token in ("local maximum", "local minima", "local minimum", "saddle"))
+    )
+    return slider_intent and function_intent
 
 
 def _is_surface_plotly(code: str) -> bool:
@@ -498,6 +479,109 @@ def _is_surface_plotly(code: str) -> bool:
         if trace_type in {"surface", "mesh3d", "scatter3d"}:
             return True
     return False
+
+
+def _looks_like_ab_xy_tunable_surface(content: str) -> bool:
+    compact = content.lower().replace(" ", "")
+    if not _is_xy_surface_request(compact):
+        return False
+    has_a_term = re.search(r"a\*?x(?:\^|\*\*)?2", compact) is not None
+    has_b_term = re.search(r"b\*?y(?:\^|\*\*)?2", compact) is not None
+    return has_a_term and has_b_term
+
+
+def _ab_operator_from_request(content: str) -> str:
+    compact = content.lower().replace(" ", "")
+    plus_pattern = r"a\*?x(?:\^|\*\*)?2\+b\*?y(?:\^|\*\*)?2"
+    minus_pattern = r"a\*?x(?:\^|\*\*)?2-b\*?y(?:\^|\*\*)?2"
+    if re.search(plus_pattern, compact):
+        return "plus"
+    if re.search(minus_pattern, compact):
+        return "minus"
+    return "minus"
+
+
+def _coerce_slider_spec(raw: Any, fallback: Dict[str, float]) -> Dict[str, float]:
+    if not isinstance(raw, dict):
+        return dict(fallback)
+    try:
+        min_v = float(raw.get("min", fallback["min"]))
+        max_v = float(raw.get("max", fallback["max"]))
+        step_v = float(raw.get("step", fallback["step"]))
+        default_v = float(raw.get("default", fallback["default"]))
+    except Exception:
+        return dict(fallback)
+    if not (min_v < max_v and step_v > 0):
+        return dict(fallback)
+    default_v = max(min_v, min(max_v, default_v))
+    return {"min": min_v, "max": max_v, "step": step_v, "default": default_v}
+
+
+def _llm_select_ab_slider_ranges(*, model: str, api_key: str, user_request: str) -> Dict[str, Dict[str, float]]:
+    defaults = {
+        "a": {"min": -2.5, "max": 2.5, "step": 0.1, "default": 1.0},
+        "b": {"min": -2.5, "max": 2.5, "step": 0.1, "default": 1.0},
+        "scale": {"min": 8.0, "max": 28.0, "step": 1.0, "default": 16.0},
+    }
+    system = (
+        "Choose slider ranges for a real-time 3D plot of f(x,y)=a*x^2-b*y^2.\n"
+        "Goal: maximize visual readability and responsiveness.\n"
+        "Constraints:\n"
+        "- Keep ranges finite and practical for x,y in [-3,3].\n"
+        "- Avoid mostly-flat or extreme-clipping defaults.\n"
+        "- step must be positive.\n"
+        "Return strict JSON only with schema:\n"
+        '{"a":{"min":number,"max":number,"step":number,"default":number},'
+        '"b":{"min":number,"max":number,"step":number,"default":number},'
+        '"scale":{"min":number,"max":number,"step":number,"default":number}}'
+    )
+    user = (
+        f"User request:\n{user_request}\n\n"
+        "Pick values that make saddle-shape changes clearly visible when moving sliders."
+    )
+    try:
+        raw = _invoke_openai_chat(model=model, api_key=api_key, system=system, user=user)
+        parsed = _extract_json_block(raw)
+        if not isinstance(parsed, dict):
+            return defaults
+    except Exception:
+        return defaults
+
+    return {
+        "a": _coerce_slider_spec(parsed.get("a"), defaults["a"]),
+        "b": _coerce_slider_spec(parsed.get("b"), defaults["b"]),
+        "scale": _coerce_slider_spec(parsed.get("scale"), defaults["scale"]),
+    }
+
+
+def _build_slider_artifact_from_request(content: str, *, model: str, api_key: str) -> Dict[str, str]:
+    if _looks_like_ab_xy_tunable_surface(content):
+        ranges = _llm_select_ab_slider_ranges(model=model, api_key=api_key, user_request=content)
+        a_cfg = ranges["a"]
+        b_cfg = ranges["b"]
+        return {
+            "type": "plotly",
+            "title": "",
+            "description": "Use sliders for a and b to update the 3D surface in real time.",
+            "code": create_ab_tunable_surface_plotly_json(
+                operator=_ab_operator_from_request(content),
+                a_min=a_cfg["min"],
+                a_max=a_cfg["max"],
+                a_step=a_cfg["step"],
+                a_default=a_cfg["default"],
+                b_min=b_cfg["min"],
+                b_max=b_cfg["max"],
+                b_step=b_cfg["step"],
+                b_default=b_cfg["default"],
+            ),
+        }
+
+    return {
+        "type": "plotly",
+        "title": "",
+        "description": "Plotly-rendered function view.",
+        "code": create_plotly_line_fallback_json(title=""),
+    }
 
 
 def _llm_generate_open_ended_explanation(
@@ -611,7 +695,7 @@ def _normalize_artifacts(raw_artifacts: Any) -> List[Dict[str, str]]:
         if not isinstance(item, dict):
             continue
         art_type = str(item.get("type", "")).strip().lower()
-        if art_type not in {"interactive_html", "plotly"}:
+        if art_type != "plotly":
             continue
         code = _repair_code_string(str(item.get("code", "")))
         if not code:
@@ -619,19 +703,12 @@ def _normalize_artifacts(raw_artifacts: Any) -> List[Dict[str, str]]:
 
         title = str(item.get("title", "")).strip() or f"Visual {idx + 1}"
         description = str(item.get("description", "")).strip()
-        if art_type == "interactive_html":
-            code = sanitize_interactive_html(code)
-            if not _looks_like_interactive_html(code):
+        try:
+            parsed = json.loads(code)
+            if not isinstance(parsed, dict) or "data" not in parsed:
                 continue
-            if not _uses_supported_interactive_lib(code):
-                continue
-        else:
-            try:
-                parsed = json.loads(code)
-                if not isinstance(parsed, dict) or "data" not in parsed:
-                    continue
-            except Exception:
-                continue
+        except Exception:
+            continue
 
         normalized.append(
             {
@@ -660,6 +737,10 @@ def _wants_visual(messages: List[Dict[str, str]]) -> bool:
         "diagram",
     )
     if any(token in content for token in explicit_hints):
+        return True
+    if _is_xy_surface_request(content):
+        return True
+    if "parameter" in content and any(token in content for token in ("f(", "function", "surface", "maxima", "minima", "saddle")):
         return True
 
     # Implicit visual intent: user asks for comparison/trend/distribution style analysis.
@@ -1006,8 +1087,8 @@ def _generate_node(state: AgentRunState) -> AgentRunState:
             "For visual requests, default to Plotly artifacts tailored to the exact prompt.\n"
             "Do not use static fallback shapes or unrelated sample charts.\n"
             "Never emit SVG artifacts.\n"
-            "For interactive_html artifacts, use only Chart.js or Plotly.js and include working JS.\n"
-            "When plotting a tunable function in interactive_html, include at least one range slider to control parameters.\n"
+            "Use Plotly artifacts only (no interactive_html).\n"
+            "When plotting a tunable function, include slider controls via Plotly-compatible metadata so the frontend can update in real time.\n"
             "For 3D requests involving f(x,y), use a true Plotly surface/3D trace instead of a 2D line chart.\n"
             "Do not include graph titles in artifacts; keep title as an empty string.\n"
             "Put brief graph explanation only in artifact.description (caption style), not in assistant_markdown.\n"
@@ -1068,6 +1149,31 @@ def _validate_node(state: AgentRunState) -> AgentRunState:
             "I could not generate a valid plot from the requested expression this time. "
             "Please restate the exact equation/system (and any initial/boundary conditions), and I will regenerate."
         )
+
+    slider_requested = _prefers_interactive_slider(latest_user)
+    if wants_visual and not text_only and slider_requested:
+        has_slider_artifact = any(
+            artifact.get("type") == "plotly"
+            and "interactiveSurface" in str(artifact.get("code", ""))
+            for artifact in artifacts
+            if isinstance(artifact, dict)
+        )
+        if not has_slider_artifact:
+            artifacts = [
+                _build_slider_artifact_from_request(
+                    latest_user,
+                    model=state["model"],
+                    api_key=state["api_key"],
+                )
+            ]
+            tool_calls = [
+                *tool_calls,
+                {
+                    "name": "inject_slider_visual_fallback",
+                    "arguments": {"reason": "user_requested_real_time_parameter_sliders"},
+                },
+            ]
+            markdown = ""
 
     # Hard guardrail: if user intent is text-first and not explicitly visual, suppress artifacts.
     if artifacts and (text_only or not wants_visual):

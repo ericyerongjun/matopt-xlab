@@ -8,6 +8,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { streamChatMessage } from "../services/chat";
+import { runPdfWorkflow } from "../services/workflow";
 import type { Message } from "../types/message";
 import type { Conversation } from "../types/conversation";
 
@@ -19,6 +20,16 @@ function uid(prefix = "msg"): string {
 function titleFromContent(content: string): string {
     const cleaned = content.replace(/\$[^$]*\$/g, "math").replace(/\s+/g, " ");
     return cleaned.length > 40 ? cleaned.slice(0, 40) + "…" : cleaned;
+}
+
+function getExtension(filename: string): string {
+    const parts = filename.toLowerCase().split(".");
+    return parts.length > 1 ? parts[parts.length - 1] : "";
+}
+
+function isPdfAttachment(file: File | null | undefined): file is File {
+    if (!file) return false;
+    return file.type === "application/pdf" || getExtension(file.name) === "pdf";
 }
 
 function recoverStructuredAssistantPayload(raw: string): {
@@ -190,10 +201,68 @@ export function useChat() {
         []
     );
 
+    const runPdfWorkflowForPrompt = useCallback(
+        async (
+            convId: string,
+            prompt: string,
+            file: File,
+            model?: string
+        ) => {
+            const assistantId = uid("asst");
+            const assistantMsg: Message = {
+                id: assistantId,
+                role: "assistant",
+                content: "",
+                timestamp: Date.now(),
+            };
+
+            setConversations((prev) =>
+                prev.map((c) =>
+                    c.id === convId
+                        ? {
+                              ...c,
+                              messages: [...c.messages, assistantMsg],
+                              updatedAt: Date.now(),
+                          }
+                        : c
+                )
+            );
+
+            const result = await runPdfWorkflow(file, prompt, model);
+            const metadata: Record<string, unknown> = {
+                ...(result.metadata ?? {}),
+                selected_skills: result.selected_skills,
+                downloads: [result.download],
+                workflow_analysis: result.analysis,
+            };
+
+            setConversations((prev) =>
+                prev.map((c) =>
+                    c.id === convId
+                        ? {
+                              ...c,
+                              messages: c.messages.map((m) =>
+                                  m.id === assistantId
+                                      ? {
+                                            ...m,
+                                            content: result.assistant_markdown,
+                                            metadata,
+                                        }
+                                      : m
+                              ),
+                              updatedAt: Date.now(),
+                          }
+                        : c
+                )
+            );
+        },
+        []
+    );
+
     // ── send message ────────────────────────────────────────────────────
 
     const sendMessage = useCallback(
-        async (content: string, model?: string) => {
+        async (content: string, model?: string, attachment?: File | null) => {
             let convId = activeId;
 
             // Auto-create conversation if none active
@@ -243,8 +312,11 @@ export function useChat() {
                     ...(currentConv?.messages ?? []),
                     userMsg,
                 ];
-
-                await runAssistantForHistory(convId, history, model);
+                if (isPdfAttachment(attachment)) {
+                    await runPdfWorkflowForPrompt(convId, content, attachment, model);
+                } else {
+                    await runAssistantForHistory(convId, history, model);
+                }
             } catch (err: unknown) {
                 const msg =
                     err instanceof Error ? err.message : "Chat failed";
@@ -253,7 +325,7 @@ export function useChat() {
                 setLoading(false);
             }
         },
-        [activeId, conversations, runAssistantForHistory]
+        [activeId, conversations, runAssistantForHistory, runPdfWorkflowForPrompt]
     );
 
     const regenerateAssistant = useCallback(

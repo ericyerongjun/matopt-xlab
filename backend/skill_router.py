@@ -31,28 +31,212 @@ _STOPWORDS = {
     "build",
     "code",
     "file",
+    "files",
     "repo",
     "project",
+    "want",
+    "need",
+    "please",
+    "just",
+    "like",
+    "task",
+    "tasks",
+}
+
+_SKILL_ALIASES: Dict[str, Set[str]] = {
+    "algorithmic-art": {
+        "algorithmic art",
+        "generative art",
+        "creative coding",
+        "p5",
+        "p5.js",
+    },
+    "doc": {
+        "docx",
+        "word",
+        "word document",
+        "document formatting",
+    },
+    "doc-coauthoring": {
+        "coauthor",
+        "co-author",
+        "documentation",
+        "technical spec",
+        "proposal",
+        "rfc",
+        "prd",
+        "design doc",
+    },
+    "docx": {
+        "docx",
+        "word",
+        "word document",
+        "track changes",
+        "redline",
+    },
+    "frontend-design": {
+        "frontend design",
+        "ui design",
+        "interface design",
+        "visual design",
+    },
+    "frontend-skill": {
+        "landing page",
+        "website",
+        "web app ui",
+        "prototype",
+        "frontend",
+    },
+    "imagegen": {
+        "image generation",
+        "generate image",
+        "edit image",
+        "illustration",
+        "mockup",
+        "sprite",
+    },
+    "jupyter-notebook": {
+        "jupyter",
+        "notebook",
+        "ipynb",
+        "lab notebook",
+        "experiment notebook",
+    },
+    "pdf": {
+        "pdf",
+        "fillable form",
+        "merge pdf",
+        "split pdf",
+        "extract pdf",
+    },
+    "playwright": {
+        "playwright",
+        "browser automation",
+        "e2e",
+        "end to end",
+        "ui automation",
+    },
+    "playwright-interactive": {
+        "playwright interactive",
+        "persistent browser",
+        "js_repl",
+        "electron testing",
+    },
+    "pptx": {
+        "pptx",
+        "powerpoint",
+        "slide deck",
+        "presentation",
+    },
+    "screenshot": {
+        "screenshot",
+        "screen capture",
+        "capture screen",
+        "snip",
+    },
+    "slides": {
+        "slides",
+        "pptxgenjs",
+        "presentation deck",
+        "powerpoint deck",
+    },
+    "spreadsheet": {
+        "spreadsheet",
+        "excel",
+        "worksheet",
+        "csv",
+        "tsv",
+    },
+    "web-artifacts-builder": {
+        "web artifact",
+        "artifact",
+        "react artifact",
+        "tailwind",
+        "shadcn",
+        "interactive html",
+    },
+    "webapp-testing": {
+        "webapp testing",
+        "web app testing",
+        "frontend testing",
+        "qa automation",
+    },
+    "xlsx": {
+        "xlsx",
+        "xlsm",
+        "excel workbook",
+        "spreadsheet file",
+    },
 }
 
 _INTENT_BOOSTS = [
     (
         {"graph", "plot", "plotly", "chart", "svg", "interactive", "html", "visualize", "visual"},
-        {"web-artifacts-builder", "imagegen", "algorithmic-art", "frontend-skill", "spreadsheet", "jupyter-notebook"},
+        {
+            "web-artifacts-builder",
+            "imagegen",
+            "algorithmic-art",
+            "frontend-skill",
+            "frontend-design",
+            "spreadsheet",
+            "jupyter-notebook",
+            "slides",
+        },
     ),
     (
-        {"pdf", "doc", "docx", "ppt", "pptx", "slide", "slides"},
-        {"pdf", "doc", "docx", "pptx", "slides", "xlsx", "spreadsheet"},
+        {"pdf", "doc", "docx", "word", "wordprocessing", "redline"},
+        {"pdf", "doc", "docx", "doc-coauthoring"},
+    ),
+    (
+        {"ppt", "pptx", "powerpoint", "slide", "slides", "presentation"},
+        {"pptx", "slides"},
+    ),
+    (
+        {"excel", "spreadsheet", "xlsx", "xls", "csv", "tsv", "worksheet"},
+        {"spreadsheet", "xlsx"},
     ),
     (
         {"test", "testing", "e2e", "playwright", "browser", "screenshot"},
         {"playwright", "playwright-interactive", "webapp-testing", "screenshot"},
     ),
+    (
+        {"jupyter", "notebook", "ipynb"},
+        {"jupyter-notebook"},
+    ),
+]
+
+
+_CO_SELECTION_RULES: List[Dict[str, Any]] = [
+    {
+        "if_any_selected": {"slides", "pptx"},
+        "query_terms_any": {"slide", "slides", "ppt", "pptx", "powerpoint", "presentation", "deck"},
+        "add": ["slides", "pptx"],
+    },
+    {
+        "if_any_selected": {"playwright", "webapp-testing"},
+        "query_terms_any": {"test", "testing", "e2e", "browser", "ui", "qa", "flow"},
+        "add": ["playwright", "webapp-testing"],
+    },
+    {
+        "if_any_selected": {"doc", "docx"},
+        "query_terms_any": {"doc", "docx", "word", "document", "redline", "track", "changes"},
+        "add": ["doc", "docx"],
+    },
+    {
+        "if_any_selected": {"xlsx", "spreadsheet"},
+        "query_terms_any": {"xlsx", "xls", "excel", "spreadsheet", "worksheet", "csv", "tsv"},
+        "add": ["xlsx", "spreadsheet"],
+    },
+    {
+        "if_any_selected": {"frontend-skill", "frontend-design"},
+        "query_terms_any": {"frontend", "ui", "design", "website", "landing", "webapp", "prototype"},
+        "add": ["frontend-skill", "frontend-design"],
+    },
 ]
 
 
 def _tokenize(text: str) -> List[str]:
-    return re.findall(r"[a-z0-9][a-z0-9\-\+_\.]{2,}", text.lower())
+    return re.findall(r"[a-z0-9][a-z0-9\-\+_\.]{1,}", text.lower())
 
 
 def _extract_keywords(content: str, limit: int = 2500) -> Set[str]:
@@ -63,7 +247,7 @@ def _extract_keywords(content: str, limit: int = 2500) -> Set[str]:
             selected_lines.append(stripped)
     text = "\n".join(selected_lines)[:limit]
     tokens = _tokenize(text)
-    return {t for t in tokens if len(t) >= 3 and t not in _STOPWORDS}
+    return {t for t in tokens if len(t) >= 2 and t not in _STOPWORDS}
 
 
 def _skill_keywords(slug: str) -> Set[str]:
@@ -76,10 +260,12 @@ def _skill_keywords(slug: str) -> Set[str]:
 
     title = str(skill.get("title", ""))
     content = str(skill.get("content", ""))
-    slug_terms = [p for p in normalized.split("-") if len(p) >= 3]
+    slug_terms = [p for p in normalized.split("-") if len(p) >= 2]
     keywords = set(slug_terms)
     keywords.update(_extract_keywords(title))
     keywords.update(_extract_keywords(content))
+    for alias in _SKILL_ALIASES.get(normalized, set()):
+        keywords.update(_extract_keywords(alias, limit=200))
     _CACHE[normalized] = (stamp, keywords)
     return keywords
 
@@ -91,15 +277,70 @@ def _latest_user_text(messages: List[Dict[str, str]]) -> str:
     return ""
 
 
-def auto_select_skill_slugs(
-    messages: List[Dict[str, str]],
-    max_skills: int = 4,
-    min_score: int = 6,
+def _available_skill_slugs() -> List[str]:
+    slugs: List[str] = []
+    for item in list_skills():
+        slug = str(item.get("slug", "")).strip()
+        if slug:
+            slugs.append(slug)
+    return slugs
+
+
+def _normalize_to_existing_slugs(candidates: List[str], valid_slugs: Set[str]) -> List[str]:
+    selected: List[str] = []
+    for raw in candidates:
+        normalized = slugify(str(raw))
+        if normalized in valid_slugs and normalized not in selected:
+            selected.append(normalized)
+    return selected
+
+
+def _apply_co_selection(
+    *,
+    selected: List[str],
+    query: str,
+    valid_slugs: Set[str],
+    max_skills: int,
 ) -> List[str]:
-    query = _latest_user_text(messages).strip().lower()
-    if not query:
+    if not selected:
         return []
 
+    enriched = [slug for slug in selected if slug in valid_slugs]
+    query_tokens = set(_tokenize(query.lower()))
+    query_lower = query.lower()
+
+    for rule in _CO_SELECTION_RULES:
+        if_any_selected = set(rule.get("if_any_selected", set()))
+        add_slugs = [slugify(str(s)) for s in rule.get("add", [])]
+        trigger_terms = set(str(t).lower() for t in rule.get("query_terms_any", set()))
+
+        if not set(enriched).intersection(if_any_selected):
+            continue
+
+        triggered = False
+        if query_tokens.intersection(trigger_terms):
+            triggered = True
+        else:
+            for term in trigger_terms:
+                if term in query_lower:
+                    triggered = True
+                    break
+
+        if not triggered:
+            continue
+
+        for slug in add_slugs:
+            if slug in valid_slugs and slug not in enriched:
+                enriched.append(slug)
+            if len(enriched) >= max_skills:
+                break
+        if len(enriched) >= max_skills:
+            break
+
+    return enriched[:max_skills]
+
+
+def _heuristic_rankings(query: str) -> List[Tuple[int, str]]:
     query_tokens = set(_tokenize(query))
     if not query_tokens:
         return []
@@ -112,26 +353,58 @@ def auto_select_skill_slugs(
 
         score = 0
         if slug in query:
-            score += 10
+            score += 12
 
-        slug_parts = [p for p in slug.split("-") if len(p) >= 3 and p not in _STOPWORDS]
+        slug_parts = [p for p in slug.split("-") if len(p) >= 2 and p not in _STOPWORDS]
         for part in slug_parts:
             if part in query_tokens:
-                score += 6
+                score += 5
+
+        for alias in _SKILL_ALIASES.get(slug, set()):
+            alias_lower = alias.lower()
+            if alias_lower in query:
+                score += 10
+            alias_tokens = [t for t in _tokenize(alias_lower) if t not in _STOPWORDS]
+            overlap_alias = len(set(alias_tokens).intersection(query_tokens))
+            if overlap_alias:
+                score += min(overlap_alias * 3, 8)
 
         keywords = _skill_keywords(slug)
         overlap = len(keywords.intersection(query_tokens))
-        score += min(overlap, 5)
+        score += min(overlap, 7)
 
         for terms, boosted_slugs in _INTENT_BOOSTS:
             if query_tokens.intersection(terms) and slug in boosted_slugs:
-                score += 10
+                score += 8
 
-        if score >= min_score:
+        if score > 0:
             scored.append((score, slug))
 
     scored.sort(key=lambda row: (-row[0], row[1]))
-    return [slug for _, slug in scored[:max_skills]]
+    return scored
+
+
+def auto_select_skill_slugs(
+    messages: List[Dict[str, str]],
+    max_skills: int = 4,
+    min_score: int = 8,
+) -> List[str]:
+    query = _latest_user_text(messages).strip().lower()
+    if not query:
+        return []
+
+    ranked = _heuristic_rankings(query)
+    if not ranked:
+        return []
+    top_score = ranked[0][0]
+    dynamic_threshold = max(min_score, top_score - 6)
+    selected = [slug for score, slug in ranked if score >= dynamic_threshold][:max_skills]
+    return _apply_co_selection(
+        selected=selected,
+        query=query,
+        valid_slugs=set(_available_skill_slugs()),
+        max_skills=max_skills,
+    )
 
 
 def _excerpt(content: str, max_chars: int = 900) -> str:
@@ -211,7 +484,11 @@ def llm_select_skills(
             snippet = _excerpt(str(full.get("content", "")))
         except Exception:
             snippet = ""
-        catalog_lines.append(f"- slug: {slug}\n  title: {title}\n  excerpt: {snippet}")
+        aliases = sorted(_SKILL_ALIASES.get(slug, set()))
+        alias_text = ", ".join(aliases[:8]) if aliases else ""
+        catalog_lines.append(
+            f"- slug: {slug}\n  title: {title}\n  aliases: {alias_text}\n  excerpt: {snippet}"
+        )
 
     system_prompt = (
         "You are a skill routing engine. "
@@ -248,12 +525,7 @@ def llm_select_skills(
     requested = parsed.get("selected_slugs", [])
     selected: List[str] = []
     if isinstance(requested, list):
-        for slug in requested:
-            normalized = slugify(str(slug))
-            if normalized in valid_slugs and normalized not in selected:
-                selected.append(normalized)
-            if len(selected) >= max_skills:
-                break
+        selected = _normalize_to_existing_slugs([str(s) for s in requested], valid_slugs)[:max_skills]
 
     per_skill_rationale = parsed.get("per_skill_rationale", [])
     normalized_rationale: List[Dict[str, str]] = []
@@ -298,9 +570,11 @@ def resolve_skill_selection(
     model: str | None = None,
     max_skills: int = 4,
 ) -> Dict[str, Any]:
+    valid_slugs = set(_available_skill_slugs())
+
     if explicit_skill_slugs:
         normalized = [slugify(s) for s in explicit_skill_slugs if str(s).strip()]
-        selected = list(dict.fromkeys(normalized))
+        selected = _normalize_to_existing_slugs(normalized, valid_slugs)
         return {
             "strategy": "explicit",
             "selected_slugs": selected,
@@ -313,12 +587,26 @@ def resolve_skill_selection(
 
     if openai_client is not None and model:
         try:
-            return llm_select_skills(
+            llm_result = llm_select_skills(
                 openai_client=openai_client,
                 model=model,
                 messages=messages,
                 max_skills=max_skills,
             )
+            llm_selected = [
+                str(slug)
+                for slug in llm_result.get("selected_slugs", [])
+                if str(slug).strip() and str(slug) in valid_slugs
+            ]
+            if llm_selected:
+                query = _latest_user_text(messages).strip().lower()
+                llm_result["selected_slugs"] = _apply_co_selection(
+                    selected=llm_selected[:max_skills],
+                    query=query,
+                    valid_slugs=valid_slugs,
+                    max_skills=max_skills,
+                )
+                return llm_result
         except Exception:
             # Fall back to deterministic routing when LLM selection fails.
             pass

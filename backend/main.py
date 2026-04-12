@@ -2,19 +2,22 @@ import base64
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import textwrap
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Literal, Optional
 from xml.etree import ElementTree as ET
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 from pydantic import BaseModel, Field
 
@@ -91,6 +94,20 @@ class SkillResponse(BaseModel):
     size_bytes: int
 
 
+class WorkflowDownload(BaseModel):
+    url: str
+    filename: str
+    size_bytes: int
+
+
+class PdfWorkflowResponse(BaseModel):
+    assistant_markdown: str
+    analysis: str
+    selected_skills: List[str] = Field(default_factory=list)
+    download: WorkflowDownload
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 app = FastAPI(title="MatOpt Chat Backend", version="0.1.0")
 
 app.add_middleware(
@@ -100,6 +117,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+GENERATED_ROOT = Path(__file__).resolve().parent / "generated"
+GENERATED_ROOT.mkdir(parents=True, exist_ok=True)
+app.mount("/generated", StaticFiles(directory=str(GENERATED_ROOT)), name="generated")
 
 
 SUPPORTED_EXTENSIONS = {
@@ -171,6 +192,232 @@ def _safe_decode(data: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", errors="replace")
+
+
+def _extract_json_object(raw: str) -> Dict[str, Any]:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        return {}
+    try:
+        parsed = json.loads(match.group(0))
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def _extract_script(raw: str) -> str:
+    text = raw.strip()
+    fenced = re.search(r"```python\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        return fenced.group(1).strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:python)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
+def _safe_output_filename(stem: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", stem).strip("-").lower()
+    if not cleaned:
+        cleaned = "processed"
+    return cleaned[:60]
+
+
+def _generate_pdf_plan(*, openai_client: OpenAI, model: str, prompt: str) -> Dict[str, str]:
+    system_prompt = (
+        "You are a PDF workflow planner.\n"
+        "Analyze user intent, select the skill, and generate a runnable Python script.\n"
+        "Output strict JSON only with schema:\n"
+        "{\n"
+        '  "analysis": "short intent analysis",\n'
+        '  "selected_skill": "pdf",\n'
+        '  "python_script": "python code string",\n'
+        '  "assistant_markdown": "user-facing explanation"\n'
+        "}\n"
+        "Rules:\n"
+        "- selected_skill must be 'pdf'.\n"
+        "- python_script must use fitz (PyMuPDF) only.\n"
+        "- python_script must read INPUT_PDF and OUTPUT_PDF from os.environ.\n"
+        "- python_script must write a valid output PDF to OUTPUT_PDF.\n"
+        "- python_script should perform a safe, visible modification that matches the user request.\n"
+        "- python_script must print one JSON object to stdout: {\"summary\": \"...\"}.\n"
+    )
+    user_prompt = (
+        f"User request:\n{prompt}\n\n"
+        "Generate a robust script. If request is ambiguous, do a conservative edit: add a footer watermark "
+        "with processing timestamp to each page."
+    )
+    completion = openai_client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.0,
+    )
+    raw = completion.choices[0].message.content or ""
+    parsed = _extract_json_object(raw)
+    script = _extract_script(str(parsed.get("python_script", "")))
+    analysis = str(parsed.get("analysis", "")).strip()
+    selected_skill = str(parsed.get("selected_skill", "pdf")).strip().lower() or "pdf"
+    assistant_markdown = str(parsed.get("assistant_markdown", "")).strip()
+
+    if not script:
+        script = (
+            "import json\n"
+            "import os\n"
+            "from datetime import datetime\n"
+            "import fitz\n\n"
+            "input_pdf = os.environ['INPUT_PDF']\n"
+            "output_pdf = os.environ['OUTPUT_PDF']\n\n"
+            "doc = fitz.open(input_pdf)\n"
+            "stamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')\n"
+            "for page in doc:\n"
+            "    page.insert_text((36, page.rect.height - 24), f'Processed by MatOpt ({stamp})', fontsize=9)\n"
+            "doc.save(output_pdf)\n"
+            "print(json.dumps({'summary': 'Added processing footer watermark to each page.'}))\n"
+        )
+    if not analysis:
+        analysis = "Detected a PDF modification request and selected the PDF skill."
+    if selected_skill != "pdf":
+        selected_skill = "pdf"
+    if not assistant_markdown:
+        assistant_markdown = (
+            "I analyzed your request, selected the PDF skill, executed a Python script, and generated a new PDF."
+        )
+
+    return {
+        "analysis": analysis,
+        "selected_skill": selected_skill,
+        "python_script": script,
+        "assistant_markdown": assistant_markdown,
+    }
+
+
+def _run_pdf_script(*, source_bytes: bytes, script: str, user_prompt: str) -> Dict[str, Any]:
+    with TemporaryDirectory(prefix="matopt_pdf_workflow_") as tmp:
+        tmp_dir = Path(tmp)
+        input_pdf = tmp_dir / "input.pdf"
+        output_pdf = tmp_dir / "output.pdf"
+        script_path = tmp_dir / "workflow.py"
+
+        input_pdf.write_bytes(source_bytes)
+        script_path.write_text(script, encoding="utf-8")
+
+        env = {
+            "PATH": os.getenv("PATH", ""),
+            "PYTHONUNBUFFERED": "1",
+            "INPUT_PDF": str(input_pdf),
+            "OUTPUT_PDF": str(output_pdf),
+            "USER_PROMPT": user_prompt,
+        }
+
+        proc = subprocess.run(
+            ["python3", str(script_path)],
+            cwd=str(tmp_dir),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            raise HTTPException(status_code=500, detail=f"PDF workflow script failed: {detail[:1400]}")
+        if not output_pdf.exists() or output_pdf.stat().st_size == 0:
+            raise HTTPException(status_code=500, detail="PDF workflow script did not generate output.")
+
+        summary = ""
+        parsed_stdout = _extract_json_object(proc.stdout or "")
+        if parsed_stdout:
+            summary = str(parsed_stdout.get("summary", "")).strip()
+
+        return {
+            "output_bytes": output_pdf.read_bytes(),
+            "summary": summary,
+        }
+
+
+def _persist_generated_pdf(*, original_filename: str, content: bytes) -> WorkflowDownload:
+    stem = Path(original_filename).stem or "processed"
+    safe_stem = _safe_output_filename(stem)
+    token = uuid.uuid4().hex[:10]
+    final_name = f"{safe_stem}-modified-{token}.pdf"
+    final_path = GENERATED_ROOT / final_name
+    final_path.write_bytes(content)
+    return WorkflowDownload(
+        url=f"/generated/{final_name}",
+        filename=final_name,
+        size_bytes=len(content),
+    )
+
+
+def _run_pdf_workflow(*, prompt: str, model: str, source_filename: str, source_bytes: bytes) -> PdfWorkflowResponse:
+    if fitz is None:
+        raise HTTPException(
+            status_code=500,
+            detail="PyMuPDF is required for PDF workflows. Install 'pymupdf'.",
+        )
+
+    client = get_client()
+    routing = resolve_skill_selection(
+        messages=[{"role": "user", "content": prompt}],
+        openai_client=None,
+        model=None,
+    )
+    routed_skills = [str(s) for s in routing.get("selected_slugs", []) if str(s).strip()]
+    if "pdf" not in routed_skills:
+        routed_skills = ["pdf", *[s for s in routed_skills if s != "pdf"]]
+
+    plan = _generate_pdf_plan(openai_client=client, model=model, prompt=prompt)
+    run_result = _run_pdf_script(
+        source_bytes=source_bytes,
+        script=str(plan.get("python_script", "")),
+        user_prompt=prompt,
+    )
+    download = _persist_generated_pdf(
+        original_filename=source_filename,
+        content=run_result["output_bytes"],
+    )
+    summary = str(run_result.get("summary", "")).strip()
+
+    assistant_markdown = str(plan.get("assistant_markdown", "")).strip()
+    route_explanation = str(routing.get("explanation", "")).strip()
+    skill_list = ", ".join(f"`{s}`" for s in routed_skills[:4]) or "`pdf`"
+    header = (
+        "Skill routing:\n"
+        f"- Selected skill(s): {skill_list}\n"
+        f"- Prompt analysis: {str(plan.get('analysis', '')).strip()}\n"
+    )
+    if route_explanation:
+        header += f"- Router rationale: {route_explanation}\n"
+    assistant_markdown = f"{header}\n{assistant_markdown}".strip()
+    if summary:
+        assistant_markdown = f"{assistant_markdown}\n\nWhat I changed: {summary}"
+
+    return PdfWorkflowResponse(
+        assistant_markdown=assistant_markdown,
+        analysis=str(plan.get("analysis", "")),
+        selected_skills=routed_skills[:4],
+        download=download,
+        metadata={
+            "workflow": "pdf",
+            "selected_skills": routed_skills[:4],
+            "router_strategy": str(routing.get("strategy", "")),
+        },
+    )
 
 
 def _render_text_preview_image(text: str) -> str:
@@ -649,6 +896,44 @@ def chat_stream(payload: ChatRequest):
 @app.post("/api/chat/stream")
 def chat_stream_api(payload: ChatRequest):
     return _stream_chat_sse(payload)
+
+
+@app.post("/workflows/pdf", response_model=PdfWorkflowResponse)
+async def workflows_pdf(
+    prompt: str = Form(...),
+    file: UploadFile = File(...),
+    model: Optional[str] = Form(None),
+) -> PdfWorkflowResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+    ext = _get_extension(file.filename)
+    if ext != "pdf":
+        raise HTTPException(status_code=400, detail="This workflow currently supports PDF files only.")
+
+    payload = (prompt or "").strip()
+    if not payload:
+        raise HTTPException(status_code=400, detail="Prompt is required.")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    resolved_model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    return _run_pdf_workflow(
+        prompt=payload,
+        model=resolved_model,
+        source_filename=file.filename,
+        source_bytes=data,
+    )
+
+
+@app.post("/api/workflows/pdf", response_model=PdfWorkflowResponse)
+async def workflows_pdf_api(
+    prompt: str = Form(...),
+    file: UploadFile = File(...),
+    model: Optional[str] = Form(None),
+) -> PdfWorkflowResponse:
+    return await workflows_pdf(prompt=prompt, file=file, model=model)
 
 
 def _skill_response(data: Dict[str, Any]) -> SkillResponse:

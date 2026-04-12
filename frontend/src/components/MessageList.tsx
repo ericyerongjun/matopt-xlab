@@ -20,6 +20,11 @@ interface MessageRowProps {
     showActions?: boolean;
 }
 
+interface DownloadItem {
+    url: string;
+    filename: string;
+}
+
 function looksLikeRawBackendMaterial(content: string): boolean {
     const raw = content.trim();
     if (!raw) return false;
@@ -38,9 +43,26 @@ function looksLikeRawBackendMaterial(content: string): boolean {
     );
 }
 
+function extractDownloads(metadata: Record<string, unknown> | undefined): DownloadItem[] {
+    if (!metadata) return [];
+    const raw = metadata.downloads;
+    if (!Array.isArray(raw)) return [];
+    return raw
+        .filter((entry): entry is DownloadItem => {
+            if (!entry || typeof entry !== "object") return false;
+            const row = entry as Record<string, unknown>;
+            return typeof row.url === "string" && typeof row.filename === "string";
+        })
+        .map((entry) => ({
+            url: entry.url,
+            filename: entry.filename,
+        }));
+}
+
 function MessageRow({ msg, loading, onRegenerate, showActions }: MessageRowProps) {
     const hideRaw = msg.role === "assistant" && looksLikeRawBackendMaterial(msg.content);
     const [copied, setCopied] = useState(false);
+    const downloads = extractDownloads(msg.metadata);
 
     const copyOutput = async () => {
         try {
@@ -72,6 +94,22 @@ function MessageRow({ msg, loading, onRegenerate, showActions }: MessageRowProps
                                                 key={`${msg.id}-artifact-${idx}`}
                                                 artifact={artifact}
                                             />
+                                        ))}
+                                    </div>
+                                )}
+                                {downloads.length > 0 && (
+                                    <div className="thread__downloads">
+                                        {downloads.map((download, idx) => (
+                                            <a
+                                                key={`${msg.id}-download-${idx}`}
+                                                className="thread__download-link"
+                                                href={download.url}
+                                                download={download.filename}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                            >
+                                                Download {download.filename}
+                                            </a>
                                         ))}
                                     </div>
                                 )}

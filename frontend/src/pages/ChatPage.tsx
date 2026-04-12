@@ -14,9 +14,9 @@ import { useExport } from "../hooks/useExport";
 import { MessageList, MathInput, Sidebar, WelcomeScreen } from "../components";
 import type { ExportFormat } from "../types/export";
 import {
+    DEFAULT_PROVIDER_LOGO,
     PROVIDER_MODELS,
     PROVIDER_LOGOS,
-    PROVIDER_INITIALS,
 } from "../constants/providers";
 
 const ACCEPTED_EXTENSIONS = [
@@ -90,24 +90,6 @@ function maybeRevokeObjectUrl(url: string | null): void {
 }
 
 export default function ChatPage() {
-    const handleLogoLoad = (
-        e: React.SyntheticEvent<HTMLImageElement, Event>
-    ) => {
-        e.currentTarget.style.display = "block";
-        const fallback = e.currentTarget
-            .nextElementSibling as HTMLElement | null;
-        if (fallback) fallback.style.display = "none";
-    };
-
-    const handleLogoError = (
-        e: React.SyntheticEvent<HTMLImageElement, Event>
-    ) => {
-        e.currentTarget.style.display = "none";
-        const fallback = e.currentTarget
-            .nextElementSibling as HTMLElement | null;
-        if (fallback) fallback.style.display = "inline-flex";
-    };
-
     const {
         conversations,
         activeId,
@@ -143,9 +125,18 @@ export default function ChatPage() {
 
     const handleSend = useCallback(
         (text: string) => {
-            sendMessage(text, toApiModelName(selectedModel));
+            const attachment = uploadedFile;
+            sendMessage(text, toApiModelName(selectedModel), attachment);
+            if (attachment) {
+                setUploadedFile(null);
+                setTextPreview(null);
+                setPreviewUrl((prev) => {
+                    maybeRevokeObjectUrl(prev);
+                    return null;
+                });
+            }
         },
-        [sendMessage, selectedModel]
+        [sendMessage, selectedModel, uploadedFile]
     );
 
     const handleRegenerate = useCallback(
@@ -263,7 +254,17 @@ export default function ChatPage() {
                             type="button"
                             onClick={() => setModelMenuOpen(!modelMenuOpen)}
                         >
-                            <span>{selectedProvider}</span>
+                            <span className="main__model-provider">
+                                <img
+                                    className="main__provider-logo"
+                                    src={PROVIDER_LOGOS[selectedProvider] ?? DEFAULT_PROVIDER_LOGO}
+                                    alt={`${selectedProvider} logo`}
+                                    onError={(e) => {
+                                        e.currentTarget.src = DEFAULT_PROVIDER_LOGO;
+                                    }}
+                                />
+                                {selectedProvider}
+                            </span>
                             <span className="main__model-selected">
                                 {selectedModel}
                             </span>
@@ -301,14 +302,12 @@ export default function ChatPage() {
                                                 <span className="main__provider-logo-wrap">
                                                     <img
                                                         className="main__provider-logo"
-                                                        src={PROVIDER_LOGOS[provider]}
+                                                        src={PROVIDER_LOGOS[provider] ?? DEFAULT_PROVIDER_LOGO}
                                                         alt={`${provider} logo`}
-                                                        onLoad={handleLogoLoad}
-                                                        onError={handleLogoError}
+                                                        onError={(e) => {
+                                                            e.currentTarget.src = DEFAULT_PROVIDER_LOGO;
+                                                        }}
                                                     />
-                                                    <span className="main__provider-logo-fallback">
-                                                        {PROVIDER_INITIALS[provider] ?? provider.slice(0, 2).toUpperCase()}
-                                                    </span>
                                                 </span>
                                                 {provider}
                                             </button>
